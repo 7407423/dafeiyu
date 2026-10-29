@@ -22,6 +22,19 @@ if str(ROOT) not in sys.path:
 
 from core import db, settings  # noqa: E402
 
+# 原生崩溃（如 ucrtbase.dll / BEX64）不会走 Python 的异常链，只会让进程直接消失。
+# faulthandler 把**崩溃瞬间的栈**写到 logs/crash.log —— 没有它，只能靠猜（22:46 那次就是这样）。
+try:
+    import faulthandler
+
+    settings.ensure_dirs()
+    _crash = open(settings.LOGS / "crash.log", "a", encoding="utf-8")
+    faulthandler.enable(file=_crash, all_threads=True)
+    _crash.write(f"\n===== 启动 {datetime.now():%Y-%m-%d %H:%M:%S} =====\n")
+    _crash.flush()
+except Exception:
+    pass
+
 
 def _log(message: str) -> None:
     settings.ensure_dirs()

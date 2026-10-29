@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from core import db, settings
-VERSION = "0.9.0"          # 开源首发版本号；发版时改这里
+VERSION = "0.9.1"          # 开源首发版本号；发版时改这里
 from ui.dashboard import ACCENT, SectionTitle, StatCard
 from ui.widgets import hint_label
 

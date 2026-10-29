@@ -71,6 +71,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "emotion": vector.status(),
                              "chitchat": chitchat.view(vector.current()),
                              "refusal": refusal_arbiter.default().status()})
+        elif self.path.startswith("/api/curiosity/level"):
+            # 给桥接用：现在有多"想学东西"（0~1）。抖音请示的冷却期例外就看它。
+            level = 0.0
+            detail = {}
+            try:
+                from . import curiosity_engine, homeostasis
+
+                st = curiosity_engine.status()
+                top = max((d.get("urgency", 0) for d in st.get("domains", [])), default=0.0)
+                boredom, _ = homeostasis.boredom_signal()
+                level = round(min(1.0, max(0.0, max(float(top), float(boredom)))), 3)
+                detail = {"top_urgency": top, "boredom": boredom}
+            except Exception as exc:  # noqa: BLE001
+                detail = {"error": str(exc)}
+            self._json(200, {"ok": True, "level": level, **detail})
         elif self.path.startswith("/api/hormones/state"):
             from . import hormones
 
