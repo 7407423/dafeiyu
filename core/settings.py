@@ -156,7 +156,33 @@ def get(path: str, default: Any = None) -> Any:
     return node
 
 
+def bootstrap_config() -> dict:
+    """首次运行：把 `config.default/` 复制成 `config/`（开源版开箱即用）。
+
+    只补**缺失**的文件，绝不覆盖已有配置 —— 老用户升级时不会被改设置。
+    没有 config.default（开发机直接跑）就什么都不做。
+    """
+    import shutil
+
+    src = ROOT / "config.default"
+    copied = []
+    if not src.is_dir():
+        return {"copied": copied}
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    for item in src.glob("*.json"):
+        target = CONFIG / item.name
+        if target.exists():
+            continue
+        try:
+            shutil.copy2(item, target)
+            copied.append(item.name)
+        except Exception:
+            continue
+    return {"copied": copied}
+
+
 def ensure_dirs() -> None:
+    bootstrap_config()
     for d in (
         CONFIG, DB_DIR, DB_DIR / "backup", MEMORY, LEARNING, STATE, LOGS, UI / "assets",
         MEMORY / "instant", MEMORY / "short_term", MEMORY / "long_term_1",

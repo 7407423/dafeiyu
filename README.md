@@ -25,7 +25,26 @@
 
 ---
 
-## 0. 怎么跑起来
+## 0. 快速开始
+
+### Windows（最省事）
+
+1. 装 Python 3.10+（安装时勾 **Add Python to PATH**）：https://www.python.org/downloads/
+2. 解压后**双击 `start.bat`** —— 它会自己建虚拟环境、装依赖、启动程序（不依赖 PowerShell）。
+3. 第一次启动会弹「初次见面」窗口：填名字 / 性别 / 身高 / 性格，或者直接点「用默认设定开始」。
+4. 要用模型：把 `config/llm.json` 里的 `providers.http` 填上你自己的 API（或改成 `offline` 先跑离线）。
+
+### macOS / Linux
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+python run.py
+```
+
+> `config/` 第一次运行会自动从 `config.default/` 复制一份，**不需要手动建**。
+
+## 0.1 怎么跑起来（细节）
 
 | 想做什么 | 命令 |
 | --- | --- |

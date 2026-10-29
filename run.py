@@ -45,6 +45,15 @@ def _single_instance():
 
 def boot(headless: bool = False) -> int:
     settings.ensure_dirs()
+    # 关键顺序：`init_db()` 会把数据库文件建出来，之后判「首次启动」就永远是 False。
+    # 所以在建库之前先问一次，结果留到界面起来后用。
+    is_first_run = False
+    try:
+        from core import firstrun as _fr
+
+        is_first_run = _fr.detect()
+    except Exception:
+        pass
     db.init_db()
     from core.emotion import vector
     from core.cognition import scheduler
@@ -107,7 +116,7 @@ def boot(headless: bool = False) -> int:
     try:
         from core import firstrun
 
-        if firstrun.detect():
+        if first_run:
             _log("首次启动：进入初始设定向导")
             from ui import wizard
 

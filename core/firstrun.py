@@ -70,8 +70,13 @@ def detect() -> bool:
             return False
     except Exception:
         return False
+    # 库已经建出来（run.py 会先 init_db）时，再用「有没有人设文件 / 有没有长期记忆」判一次：
+    # 全新安装：没人设、记忆表空 → 是首次；真实实例：人设文件早就在、记忆上千条 → 不是。
     try:
-        return str(db.get_meta(MARK_KEY) or "") != "1"
+        if (settings.CONFIG / "personality.md").exists():
+            return False
+        rows = db.scalar("SELECT COUNT(*) FROM memory_item", default=0)
+        return int(rows or 0) == 0 and str(db.get_meta(MARK_KEY) or "") != "1"
     except Exception:
         return True
 

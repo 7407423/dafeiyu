@@ -1,0 +1,6 @@
+# 大肥鱼 · 依赖（Python 3.10+，Windows 上用 py -3 或 python）
+PySide6>=6.5        # 界面（QtWidgets / QtCharts）
+APScheduler>=3.10   # 定时任务（认知循环、夜学、内稳态…）
+Pillow>=10          # 图片预处理（看图/表情包）
+playwright>=1.40    # 刷抖音/网页学习：驱动你本机的 Edge，不需要额外下载浏览器
+imageio-ffmpeg>=0.4 # 动图抽帧（GIF 识别用；不装也能跑，只是动图看得少）

@@ -1,0 +1,26 @@
+{
+  "_comment": "Provider 抽象：dsh（本机命令行，带联网）｜http（OpenAI 兼容）｜offline（模板兜底）。tasks 可逐项指定。",
+  "default": "offline",
+  "providers": {
+    "http": {
+      "base_url": "",
+      "api_key": "",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-chat",
+      "timeout_seconds": 120,
+      "temperature": 0.8
+    },
+    "offline": {
+      "mode": "template"
+    }
+  },
+  "tasks": {
+    "summary": "dsh",
+    "compress": "dsh",
+    "dialogue": "dsh",
+    "chitchat": "dsh",
+    "learning": "dsh",
+    "self_dialogue": "dsh",
+    "judge": "offline"
+  }
+}
