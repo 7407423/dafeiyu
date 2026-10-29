@@ -1,0 +1,83 @@
+{
+  "_readme": [
+    "这是一份【示例配置】：只有结构，没有任何真实值。",
+    "用法：把它拆开、复制到 config/ 下的同名文件里（config/app.json、config/llm.json …），再填你自己的值。",
+    "不要把这整份丢进 config/ —— 程序按文件读，不读这个总表。",
+    "字段含义见 README 的『配置』章节；删掉某项就用代码里的默认值。"
+  ],
+  "app": {
+    "schema_version": 2,
+    "window": {"width": 1240, "height": 860, "min_width": 980, "min_height": 680},
+    "tick": {"app_seconds": 20, "headless_seconds": 60, "slow_tick_warn_seconds": 20},
+    "learning": {
+      "window_start": "00:00",
+      "window_end": "01:00",
+      "self_dialogue_offset_min": 30,
+      "self_dialogue_minutes": 30,
+      "consolidate_min_after_end": 10,
+      "archive_min_after_end": 180,
+      "timezone": "Asia/Shanghai"
+    },
+    "single_instance": true,
+    "llm_timeout_seconds": 900,
+    "bridge": {
+      "enabled": false,
+      "emotion_mode": "local",
+      "dir": "",
+      "send_api": "",
+      "status_api": "",
+      "owner_qq": "",
+      "owner_name": "老大",
+      "core_emotion_api_port": 18766,
+      "token": ""
+    },
+    "embedder": {"backend": "tfidf"},
+    "legacy": {"root": ""}
+  },
+  "llm": {
+    "_comment": "离线可直接跑（offline）；接自己的模型就填 http 那段。",
+    "default": "offline",
+    "providers": {
+      "offline": {"mode": "template"},
+      "http": {
+        "base_url": "https://api.example.com/v1",
+        "api_key": "",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "your-model-name",
+        "timeout_seconds": 120,
+        "temperature": 0.8
+      }
+    },
+    "tasks": {
+      "summary": "http",
+      "compress": "http",
+      "dialogue": "http",
+      "chitchat": "http",
+      "learning": "http",
+      "self_dialogue": "http",
+      "judge": "http"
+    }
+  },
+  "thresholds": {
+    "_comment": "数值都是默认值；改这里不要改代码。完整清单见 README『阈值』一节。",
+    "instant": {"purge_hours": 18, "fuzzy_hours": 24},
+    "memory": {"short_term_hours": 6},
+    "learning": {"per_day_max": 2}
+  },
+  "emotion": {
+    "_comment": "情绪向量与阈值，默认即可用。",
+    "baseline": {"joy": 50, "happiness": 50, "sadness": 20, "inferiority": 20, "shyness": 20}
+  },
+  "vision": {
+    "tile": 800,
+    "overlap": 40,
+    "max_tiles": 64,
+    "thumb_edge": 1024,
+    "jpeg_quality": 88,
+    "session_limit": 20,
+    "max_tiles_per_call": 8
+  },
+  "residual": {"_comment": "跨会话思维链残留通道；默认参数即可。"},
+  "douyin": {"enabled": false, "minutes": 30, "perVideoSeconds": 10, "jitterSeconds": 2},
+  "memewiki": {"enabled": true, "maxChars": 700, "learnLimit": 40}
+}

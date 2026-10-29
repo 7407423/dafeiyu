@@ -1,0 +1,363 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 大肥鱼 · 开源版
+# 许可：GNU AGPL-3.0 + 《附加条款》—— 严禁闭源分发、严禁商业收费。
+# 详见根目录 LICENSE 与 ADDITIONAL_TERMS.md。
+# 本文件不含任何开发者的个人信息与真实数据。
+# ─────────────────────────────────────────────────────────────────────────────
+"""本机 HTTP 接口（127.0.0.1:18766）：给 QQ 桥接上报情绪事件用。
+
+为什么要它：桥接现在自己算情绪并写 状态.json，两边会打架。
+改成「桥接上报 → 核心算 → 桥接读快照」之后，情绪就只有一套算法（规格红线）。
+桥接那边带一键回退：连不上就退回本地算。
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from . import settings
+from .emotion import detector_reward, detector_scale, policy as policy_mod, reward, vector
+from .repo import system as sr
+
+_server: ThreadingHTTPServer | None = None
+_thread: threading.Thread | None = None
+
+
+def _state_payload() -> dict:
+    from .bridge import projection
+
+    vec = vector.current()
+    return projection.project_emotion_state(vec, reward.stats(), reward.last_ignore_ms(), dry_run=True)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "DaFeiYuCore/2.0"
+
+    def log_message(self, fmt, *args):  # 静音：别把每条请求写进 stdout
+        return
+
+    def _json(self, code: int, payload: dict) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8", "replace"))
+        except Exception:
+            return {}
+
+    def do_GET(self):  # noqa: N802
+        if self.path.startswith("/api/emotion/state"):
+            self._json(200, _state_payload())
+        elif self.path.startswith("/api/thought/residual"):
+            from .thought import residual as residual_mod
+            from .thought import session as session_mod
+
+            self._json(200, {"ok": True, "residual": residual_mod.status(vector.current()),
+                             "sessions": session_mod.status()})
+        elif self.path.startswith("/api/status"):
+            from .cognition import chitchat
+            from .refusal import arbiter as refusal_arbiter
+
+            self._json(200, {"ok": True, "emotion": vector.status(),
+                             "chitchat": chitchat.view(vector.current()),
+                             "refusal": refusal_arbiter.default().status()})
+        elif self.path.startswith("/api/hormones/state"):
+            from . import hormones
+
+            self._json(200, {"ok": True, **hormones.status(), "block": hormones.prompt_block()})
+        elif self.path.startswith("/api/desk/state"):
+            from . import deskstate
+
+            self._json(200, {"ok": True, **deskstate.state(
+                float(self.path.split("active=")[-1]) if "active=" in self.path else 5.0)})
+        elif self.path.startswith("/api/douyin/state"):
+            from . import douyin
+
+            self._json(200, {"ok": True, **douyin.status()})
+        elif self.path.startswith("/api/homeostasis/state"):
+            from . import homeostasis
+
+            self._json(200, {"ok": True, **homeostasis.status(),
+                             "block": homeostasis.prompt_block()})
+        elif self.path.startswith("/api/meme/status"):
+            from . import memewiki
+
+            self._json(200, {"ok": True, **memewiki.status()})
+        elif self.path.startswith("/api/meme/list"):
+            from . import memewiki
+
+            self._json(200, {"ok": True, "rows": memewiki.all_learned()})
+        else:
+            self._json(404, {"ok": False, "error": "not found"})
+
+    def do_POST(self):  # noqa: N802
+        body = self._body()
+        text = str(body.get("text") or "").strip()
+        if self.path.startswith("/api/emotion/event"):
+            if not text:
+                self._json(400, {"ok": False, "error": "text 不能为空"})
+                return
+            applied = []
+            for hit in detector_reward.detect(text):
+                ev = reward.apply_trigger(hit["trigger"], text, reason="桥接上报")
+                if ev:
+                    applied.append({"trigger": ev.trigger, "type": ev.type,
+                                    "rpe": ev.rpe_weight, "delta": ev.delta})
+            scale = detector_scale.apply(text)
+            # v33：同一条消息顺手打一针激素（本地正则，0 调用），并让陪伴慢慢累积催产素
+            try:
+                from . import hormones
+
+                pulse = hormones.observe(text, companion=True)
+            except Exception:
+                pulse = {}
+            self._json(200, {"ok": True, "applied": applied, "scale": scale, "hormones": pulse,
+                             "state": _state_payload()})
+            return
+        if self.path.startswith("/api/emotion/set"):
+            values = body.get("values") or {}
+            vector.set_values(values, reason="api")
+            self._json(200, {"ok": True, "state": _state_payload()})
+            return
+        if self.path.startswith("/api/emotion/decay"):
+            self._json(200, {"ok": True, "tick": vector.tick()})
+            return
+        if self.path.startswith("/api/chitchat"):
+            from .cognition import chitchat
+
+            out = chitchat.run(vec=vector.current(), manual=bool(body.get("manual", True)))
+            self._json(200, {"ok": bool(out.get("ok")), "result": out})
+            return
+        if self.path.startswith("/api/dialogue"):
+            from . import homeostasis
+            from .cognition import dialogue
+
+            try:
+                homeostasis.note("user_message")
+            except Exception:
+                pass
+
+            out = dialogue.handle_owner_message(text, conv=str(body.get("conv") or "private:owner"))
+            self._json(200, out)
+            return
+        if self.path.startswith("/api/refusal/decide"):
+            from .refusal import arbiter as refusal_arbiter
+
+            if not text:
+                self._json(400, {"ok": False, "error": "text 不能为空"})
+                return
+            decision = refusal_arbiter.default().decide(text, vector.current())
+            self._json(200, {"ok": True, "refusal": decision.as_dict()})
+            return
+        if self.path.startswith("/api/refusal/react"):
+            from .refusal import arbiter as refusal_arbiter
+
+            decision_id = str(body.get("id") or "")
+            reaction = str(body.get("reaction") or "").strip()
+            if not decision_id or reaction not in ("accept", "insist", "ignore", "praise", "insult"):
+                self._json(400, {"ok": False, "error": "id / reaction 不合法"})
+                return
+            row = refusal_arbiter.default().react(decision_id, reaction)
+            self._json(200, {"ok": row is not None, "row": row})
+            return
+        if self.path.startswith("/api/sticker/lookup"):
+            from . import sticker
+
+            sha = str(body.get("sha256") or "")
+            path = str(body.get("path") or "")
+            if not sha and path:
+                sha = sticker.sha256_file(path)
+            data = sticker.lookup(sha)
+            self._json(200, {
+                "ok": True, "hit": data is not None, "sha256": sha,
+                "summary": (data or {}).get("summary", ""),
+                "text": sticker.describe(data), "note": (data or {}).get("note", ""),
+                "usages": (data or {}).get("usages", 0),
+                "contexts": (data or {}).get("contexts", []),
+            })
+            return
+        if self.path.startswith("/api/sticker/remember"):
+            from . import sticker
+
+            sha = str(body.get("sha256") or "")
+            ok = sticker.remember(sha, summary=str(body.get("summary") or ""),
+                                  concepts=list(body.get("concepts") or []),
+                                  note=str(body.get("note") or ""))
+            self._json(200, {"ok": ok, "sha256": sha})
+            return
+        if self.path.startswith("/api/sticker/annotate"):
+            from . import sticker
+
+            sha = str(body.get("sha256") or body.get("path") and sticker.sha256_file(str(body.get("path"))) or "")
+            ok = sticker.annotate(sha, str(body.get("note") or ""))
+            self._json(200, {"ok": ok, "sha256": sha})
+            return
+        if self.path.startswith("/api/sticker/used"):
+            from . import sticker
+
+            sha = str(body.get("sha256") or "")
+            ok = sticker.observe_usage(sha, str(body.get("context") or ""))
+            self._json(200, {"ok": ok, "sha256": sha})
+            return
+        if self.path.startswith("/api/sticker/status"):
+            from . import sticker
+
+            self._json(200, {"ok": True, **sticker.status()})
+            return
+        if self.path.startswith("/api/thought/turn"):
+            from .thought import residual as residual_mod
+            from .thought import session as session_mod
+            from .thought import turn as turn_mod
+
+            conv = str(body.get("conv") or "private:owner")
+            user_text = str(body.get("user_text") or "").strip()
+            if not user_text:
+                self._json(400, {"ok": False, "error": "user_text 不能为空"})
+                return
+            try:
+                from . import homeostasis
+
+                homeostasis.note("user_message")
+            except Exception:
+                pass
+            out = turn_mod.record_turn(
+                conv, user_text=user_text, reply_text=str(body.get("reply_text") or ""),
+                memory_ids=[str(i) for i in (body.get("memory_ids") or [])][:5],
+                emotion_tag=str(body.get("emotion_tag") or "平静"),
+                tone=str(body.get("tone") or "normal"),
+                decision=str(body.get("decision") or ""),
+            )
+            cold = residual_mod.cold_start(conv, vec=vector.current())
+            self._json(200, {"ok": True, "turn": out,
+                             "cold_start": {"count": len(cold.get("nodes") or []),
+                                            "block": cold.get("block", "")[:1500]}})
+            return
+        if self.path.startswith("/api/thought/residual"):
+            from .thought import residual as residual_mod
+            from .thought import session as session_mod
+
+            self._json(200, {"ok": True, "residual": residual_mod.status(vector.current()),
+                             "sessions": session_mod.status()})
+            return
+        if self.path.startswith("/api/thought/session"):
+            from .thought import residual as residual_mod
+            from .thought import session as session_mod
+            from .thought import turn as turn_mod
+
+            conv = str(body.get("conv") or "private:owner")
+            action = str(body.get("action") or "status")
+            if action == "end":
+                out = session_mod.end(conv, reason="manual")
+            elif action == "coldstart":
+                out = residual_mod.cold_start(conv, vec=vector.current())
+            elif action == "record":
+                out = turn_mod.record_turn(conv, user_text=str(body.get("user_text") or "-"),
+                                           reply_text=str(body.get("reply_text") or ""))
+            else:
+                out = {"current": session_mod.current(conv), "status": session_mod.status()}
+            self._json(200, {"ok": True, "result": out})
+            return
+        if self.path.startswith("/api/vision/analyze"):
+            from .vision import pipeline
+
+            path = str(body.get("path") or "")
+            if not path:
+                self._json(400, {"ok": False, "error": "path 不能为空"})
+                return
+            out = pipeline.analyze(path, question=str(body.get("question") or ""),
+                                   kind=str(body.get("kind") or "upload"),
+                                   created_from="api")
+            self._json(200, out)
+            return
+        if self.path.startswith("/api/douyin/start"):
+            from . import douyin
+
+            minutes = body.get("minutes")
+            out = douyin.start(float(minutes) if minutes else None, log=lambda m: None)
+            self._json(200, {"ok": bool(out.get("ok")), **out})
+            return
+        if self.path.startswith("/api/douyin/stop"):
+            from . import douyin
+
+            self._json(200, {"ok": True, **douyin.stop()})
+            return
+        if self.path.startswith("/api/homeostasis/event"):
+            from . import homeostasis
+
+            kind = str(body.get("kind") or "user_message")
+            self._json(200, {"ok": True, **homeostasis.note(kind)})
+            return
+        if self.path.startswith("/api/meme/search"):
+            from . import memewiki
+
+            raw = str(body.get("text") or body.get("query") or "").strip()
+            if not raw:
+                self._json(400, {"ok": False, "error": "text 不能为空"})
+                return
+            query = memewiki.extract_query(raw)
+            if not query:
+                self._json(200, {"ok": True, "found": False, "query": "", "block": "",
+                                 "reason": "看不出要查哪个词"})
+                return
+            record = bool(body.get("record", True))
+            data = memewiki.search(query, record=record,
+                                   context=str(body.get("context") or raw)[:80])
+            if not data.get("found"):
+                self._json(200, {"ok": True, "found": False, "query": query, "block": "",
+                                 "reason": data.get("reason", "词库里没有")})
+                return
+            # 注意：search(record=True) 已经记过一次，这里不再记（否则一次查询算两次使用）
+            self._json(200, {"ok": True, "found": True, "query": query,
+                             "block": memewiki.block(query),
+                             "title": data["title"], "match": data["match"],
+                             "tags": data["tags"]})
+            return
+        if self.path.startswith("/api/meme/learn"):
+            from . import memewiki
+
+            title = str(body.get("title") or "").strip()
+            if not title:
+                self._json(400, {"ok": False, "error": "title 不能为空"})
+                return
+            ok = memewiki.learn(title, note=str(body.get("note") or ""),
+                                context=str(body.get("context") or "")[:80])
+            self._json(200, {"ok": ok, "title": title, "learned": memewiki.learned(title)})
+            return
+        self._json(404, {"ok": False, "error": "not found"})
+
+
+def start(port: int | None = None) -> dict:
+    global _server, _thread
+    if _server is not None:
+        return {"running": True, "port": _server.server_address[1]}
+    port = int(port or settings.app().get("bridge", {}).get("core_emotion_api_port", 18766))
+    _server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    _thread = threading.Thread(target=_server.serve_forever, name="dafeiyu-api", daemon=True)
+    _thread.start()
+    return {"running": True, "port": port}
+
+
+def stop() -> None:
+    global _server, _thread
+    if _server is not None:
+        try:
+            _server.shutdown()
+            _server.server_close()
+        except Exception:
+            pass
+    _server = None
+    _thread = None
+
+
+def running() -> bool:
+    return _server is not None
