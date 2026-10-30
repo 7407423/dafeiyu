@@ -1,0 +1,14 @@
+# 隐私扫描（v0.9.3）
+
+- 扫描时间：2026-10-30T20:42:16
+- 扫描器：`tools/opensource.py`（每次开源前跑一次）
+- 结果：**未发现可疑项**
+
+检查项：
+- 真实 QQ 号（本机两个号）
+- 本机绝对路径（`C:\Users\<用户名>`、`E:\大肥鱼`）
+- Gitee / GitHub 用户名
+- token / api_key / password 赋值
+
+开源包本身（`dafeiyu-open-source-v0.9.3.zip`）**不含**：
+`config/`、`db/`、`state/`、`记忆系统/`、`logs/`、`learning/`、`dist/`、`.venv/`。
