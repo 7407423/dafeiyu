@@ -147,6 +147,30 @@ def _looks_logged_out(page) -> bool:
     return bool(re.search(r"登录|Log ?in|扫码", body, re.I))
 
 
+def _wait_login(page, *, timeout_s: int = 180, log=None, stop_event=None) -> bool:
+    """登录页出现后保持浏览器打开，等老大扫码/登录；最多 3 分钟。
+
+    以前检测到未登录立刻抛 NeedLogin、finally 关浏览器 —— 登录页一闪而过，
+    老大来不及扫码。现在先等，登录成功就接着干。
+    """
+    deadline = time.time() + max(10, int(timeout_s))
+    last_note = 0.0
+    while time.time() < deadline:
+        if stop_event is not None and stop_event.is_set():
+            return False
+        if not _looks_logged_out(page):
+            return True
+        now = time.time()
+        if callable(log) and now - last_note >= 10:
+            last_note = now
+            _log(log, f"[web] 等待扫码登录…还剩 {int(deadline - now)} 秒")
+        try:
+            page.wait_for_timeout(2000)
+        except Exception:
+            time.sleep(2)
+    return False
+
+
 def ask_web_deepseek(question: str, *, timeout_s: int = 150, log=None, stop_event=None) -> str:
     """在**网页版** DeepSeek 里问一句，返回回答文本。不碰 API，不花钱。
 
@@ -165,7 +189,10 @@ def ask_web_deepseek(question: str, *, timeout_s: int = 150, log=None, stop_even
             page.goto(DEEPSEEK_URL, timeout=60000, wait_until="domcontentloaded")
             page.wait_for_timeout(2500)
             if _looks_logged_out(page):
-                raise NeedLogin("网页版 DeepSeek 还没登录：在弹出的浏览器里登录一次就好（只会问这一次）")
+                _log(log, "[web] 网页版 DeepSeek 未登录：浏览器保持打开，等你扫码（最多 3 分钟）")
+                if not _wait_login(page, timeout_s=180, log=log, stop_event=stop_event):
+                    raise NeedLogin("网页版 DeepSeek 还没登录：在弹出的浏览器里登录一次就好（下次点开始会再打开）")
+                _log(log, "[web] 登录成功，继续提问")
             box = _first_send_target(page)
             if box is None:
                 raise NeedLogin("找不到输入框 —— 可能页面改版或仍停在登录页")
@@ -260,7 +287,10 @@ def watch_douyin(minutes: float = 10, *, log=None, stop_event=None, batch_second
             page.goto(DOUYIN_URL, timeout=90000, wait_until="domcontentloaded")
             page.wait_for_timeout(4000)
             if _looks_logged_out(page):
-                raise NeedLogin("抖音还没登录：在弹出的浏览器里扫码登录一次（登录态会留着）")
+                _log(log, "[douyin] 未登录：浏览器保持打开，等你扫码（最多 3 分钟）")
+                if not _wait_login(page, timeout_s=180, log=log, stop_event=stop_event):
+                    raise NeedLogin("抖音还没登录：在弹出的浏览器里扫码登录一次（登录态会留着）")
+                _log(log, "[douyin] 登录成功，开始刷")
 
             _log(log, f"[douyin] 开始刷，计划 {minutes} 分钟")
             while time.time() < end_at:

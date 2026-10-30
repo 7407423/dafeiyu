@@ -123,11 +123,13 @@ QR_PROBE_JS = """
 """
 
 
-def wait_qr(page, timeout_s: float = 9.0) -> bool:
-    """等二维码画出来再截图（默认最多 9 秒，前 5 秒基本都在等它）。
+def wait_qr(page, timeout_s: float = 90.0) -> bool:
+    """等二维码画出来再截图（默认最多 90 秒）。
 
     为什么必须等：抖音的登录弹窗先出白框，二维码是**后加载**的图片。
     框一出现就截图，发过去的是一张没有码的图 —— 老大扫不了（实测踩过一次）。
+    为什么从 9 秒提到 90 秒：9 秒只够二维码画出来，不够人拿起手机扫码；
+    以前到点就截图返回、浏览器随即关闭，老大根本来不及扫。
     """
     deadline = time.time() + max(1.0, float(timeout_s))
     while time.time() < deadline:
@@ -141,6 +143,34 @@ def wait_qr(page, timeout_s: float = 9.0) -> bool:
             page.wait_for_timeout(500)
         except Exception:
             time.sleep(0.5)
+    return False
+
+
+def wait_login(page, timeout_s: float = 180.0, *, say=None, stop_event=None) -> bool:
+    """登录墙出现后**保持浏览器打开**，等老大扫码/验证码登录。
+
+    返回 True = 登录成功（登录墙消失），False = 超时/被停止。
+    以前是截一张图就 return、finally 关浏览器，二维码一闪而过；现在最多等 3 分钟。
+    """
+    deadline = time.time() + max(10.0, float(timeout_s))
+    last_note = 0.0
+    while time.time() < deadline:
+        if stop_event is not None and stop_event.is_set():
+            return False
+        try:
+            body = page.inner_text("body")[:4000]
+        except Exception:
+            body = ""
+        if body and not LOGIN_RE.search(body):
+            return True
+        now = time.time()
+        if callable(say) and now - last_note >= 10:
+            last_note = now
+            say(f"[douyin] 等待扫码登录…还剩 {int(deadline - now)} 秒（登录一次以后就不用再登）")
+        try:
+            page.wait_for_timeout(2000)
+        except Exception:
+            time.sleep(2)
     return False
 
 
@@ -274,11 +304,16 @@ def run(minutes: float | None = None, *, log=None) -> dict:
                 # 先看登录墙（它里面也有「验证码登录」四个字，顺序反了就会误报成风控）
                 if LOGIN_RE.search(body):
                     ready = wait_qr(page)
-                    say(f"[douyin] 登录墙：{'二维码已出现，截图' if ready else '等了 9 秒没等到二维码，先截一张'}")
+                    say(f"[douyin] 登录墙：{'二维码已出现' if ready else '等了 90 秒没等到二维码，先截一张'}")
                     shot = _shot_path("login")
                     page.screenshot(path=shot)
                     result.update({"need": "login", "shot": shot, "qr": ready})
-                    return result
+                    # 保持浏览器打开，等老大扫码；最多 3 分钟，登录成功就继续刷。
+                    if not wait_login(page, timeout_s=180, say=say, stop_event=stop_event):
+                        say("[douyin] 登录等待超时：浏览器马上关掉，下次点开始会再打开登录页")
+                        return result
+                    result.update({"need": "", "shot": ""})
+                    say("[douyin] 登录成功，继续刷")
                 if captcha_hit(body):
                     shot = _shot_path("captcha")
                     page.screenshot(path=shot)

@@ -13,10 +13,10 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
-from core import settings
+from core import qq_adopt, settings
 from ui.widgets import hint_label
 
 CONFIG_FILE = "qq_config.json"
@@ -76,6 +76,30 @@ class QQBridgePanel(QWidget):
         layout.addWidget(self.status)
         self.qq_line = hint_label("")
         layout.addWidget(self.qq_line)
+
+        # ── 接管已有的 QQ 接入（只写配置，不碰鱼的数据）──
+        self.adopt_status = hint_label("")
+        layout.addWidget(self.adopt_status)
+        adopt_row = QHBoxLayout()
+        self.detect = QPushButton("检测已接好的 QQ")
+        self.detect.clicked.connect(self._detect)
+        adopt_row.addWidget(self.detect)
+        self.browse = QPushButton("选择目录…")
+        self.browse.clicked.connect(self._browse)
+        adopt_row.addWidget(self.browse)
+        self.candidates = QComboBox()
+        self.candidates.setMinimumWidth(260)
+        adopt_row.addWidget(self.candidates, 1)
+        self.adopt_btn = QPushButton("一键接管")
+        self.adopt_btn.clicked.connect(self._adopt)
+        adopt_row.addWidget(self.adopt_btn)
+        self.undo_btn = QPushButton("还原上次接管")
+        self.undo_btn.clicked.connect(self._undo)
+        adopt_row.addWidget(self.undo_btn)
+        layout.addLayout(adopt_row)
+        layout.addWidget(hint_label(
+            "发现的是本机已经配好的 qq-bridge（SnowLuma / NapCat 都行）：接管只改 config/app.json 的 bridge 段"
+            "和桥接的 owner/白名单，先备份、可还原；不会动记忆、情绪、日记，也不会启动或停止桥接。"))
 
         layout.addWidget(QLabel("大肥鱼的 QQ 号"))
         self.owner = QLineEdit()
@@ -150,6 +174,84 @@ class QQBridgePanel(QWidget):
         self.rot_hours.setValue(int(rot.get("maxHours") or 6))
         self.rot_turns.setValue(int(rot.get("maxTurns") or 120))
         self.rot_idle.setValue(int(rot.get("idleMinutes") or 10))
+        self._refresh_adopt_status()
+
+    # ── 接管已有 QQ 接入 ──
+    def _refresh_adopt_status(self) -> None:
+        try:
+            st = qq_adopt.status()
+        except Exception:
+            st = {}
+        if st.get("dir"):
+            via = "（接管来的）" if st.get("adopted") else ""
+            self.adopt_status.setText(
+                f"当前 QQ 接入：{st['dir']}{via}｜{'桥接在跑' if st.get('online') else '桥接未运行'}"
+                f"｜情绪模式 {st.get('emotionMode') or 'local'}")
+        else:
+            self.adopt_status.setText("当前还没接管 QQ 接入：本机有现成的就点「检测已接好的 QQ」")
+
+    def _detect(self) -> None:
+        try:
+            rows = qq_adopt.discover()
+        except Exception as exc:  # noqa: BLE001
+            self.adopt_status.setText(f"检测失败：{exc}")
+            return
+        self.candidates.clear()
+        for info in rows:
+            label = f"{info['dir']}（{'在线' if info['online'] else '未运行'}｜QQ {info['ownerQQ'] or '?'}）"
+            self.candidates.addItem(label, info["dir"])
+        if not rows:
+            self.adopt_status.setText("没检测到已接好的 QQ 接入：确认 qq-bridge 目录在常见位置，或点「选择目录…」")
+            return
+        self.adopt_status.setText(f"检测到 {len(rows)} 个 QQ 接入，选一个点「一键接管」")
+        first = rows[0]
+        if not self.owner.text().strip() and first.get("ownerQQ"):
+            self.owner.setText(str(first["ownerQQ"]))
+
+    def _browse(self) -> None:
+        try:
+            from PySide6.QtWidgets import QFileDialog
+        except Exception:
+            return
+        start = str(bridge_dir()) if str(bridge_dir()).strip() else ""
+        chosen = QFileDialog.getExistingDirectory(self, "选择 qq-bridge 目录", start)
+        if not chosen:
+            return
+        try:
+            info = qq_adopt.inspect(chosen)
+        except Exception as exc:  # noqa: BLE001
+            self.adopt_status.setText(f"读目录失败：{exc}")
+            return
+        if not info["looksLikeBridge"]:
+            self.adopt_status.setText(f"这个目录不像 qq-bridge：{chosen}")
+            return
+        label = f"{info['dir']}（{'在线' if info['online'] else '未运行'}｜QQ {info['ownerQQ'] or '?'}）"
+        self.candidates.addItem(label, info["dir"])
+        self.candidates.setCurrentIndex(self.candidates.count() - 1)
+        self.adopt_status.setText("已选中目录，点「一键接管」")
+
+    def _adopt(self) -> None:
+        directory = self.candidates.currentData()
+        if not directory:
+            self.adopt_status.setText("先点「检测已接好的 QQ」")
+            return
+        try:
+            result = qq_adopt.adopt(directory, sync_bridge=True)
+        except Exception as exc:  # noqa: BLE001
+            self.adopt_status.setText(f"接管失败：{exc}")
+            return
+        warnings = "；".join(result.get("warnings") or [])
+        self.adopt_status.setText(f"已接管：{result['dir']}" + (f"（{warnings}）" if warnings else ""))
+        self._load()
+        self.refresh()
+
+    def _undo(self) -> None:
+        result = qq_adopt.rollback()
+        if result.get("ok"):
+            self.adopt_status.setText("已还原到接管前的配置（桥接那边的 owner/白名单保持现状）")
+            self._load()
+        else:
+            self.adopt_status.setText(f"还原失败：{result.get('error') or '未知原因'}")
 
     def _save(self) -> None:
         owner = self.owner.text().strip()
@@ -203,13 +305,14 @@ class QQBridgePanel(QWidget):
 
     # ── 只读状态 ──
     def _probe(self) -> dict:
-        base = "http://127.0.0.1:3100"
-        token = ""
+        # 端口跟着当前接管的桥接走（以前写死 3100，换端口就看不到状态）。
         try:
-            token = (bridge_dir() / "state" / "console-token").read_text(encoding="utf-8").strip()
+            info = qq_adopt.inspect(bridge_dir()) if str(bridge_dir()).strip() else {}
         except Exception:
-            pass
-        req = urllib.request.Request(base + "/api/status")
+            info = {}
+        port = int(info.get("consolePort") or 3100)
+        token = str(info.get("consoleToken") or "")
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/status")
         if token:
             req.add_header("x-console-token", token)
         try:

@@ -13,10 +13,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QTextEdit, QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
+                               QLineEdit, QPushButton, QTextEdit, QVBoxLayout)
 
-from core import firstrun
+from core import firstrun, qq_adopt
 
 WELCOME = (
     "第一次见面，先给「她」定个样子吧。\n"
@@ -71,6 +71,22 @@ class SetupWizard(QDialog):
         form.addRow("身高", self.height)
         layout.addLayout(form)
 
+        # 本机如果已经有 QQ 接入（qq-bridge + SnowLuma / NapCat），顺手接过来：
+        # 不接管的话，她只能离线自己玩，用户还得去 app.json 手填 bridge.dir。
+        self.adopt_dir = ""
+        self._found: list[dict] = []
+        try:
+            self._found = qq_adopt.discover(timeout=0.6)
+        except Exception:
+            self._found = []
+        self.adopt_check = None
+        if self._found:
+            first = self._found[0]
+            self.adopt_check = QCheckBox(
+                f"检测到本机已有 QQ 接入（{first['dir']}｜QQ {first.get('ownerQQ') or '?'}），启动后自动接管")
+            self.adopt_check.setChecked(True)
+            layout.addWidget(self.adopt_check)
+
         layout.addWidget(QLabel("性格"))
         self.template = QComboBox()
         for title, _text in firstrun.TEMPLATES:
@@ -105,6 +121,8 @@ class SetupWizard(QDialog):
             self.personality.setPlainText(firstrun.TEMPLATES[index][1])
 
     def _collect(self) -> dict:
+        if self.adopt_check is not None and self.adopt_check.isChecked() and self._found:
+            self.adopt_dir = str(self._found[0]["dir"])
         return {
             "name": (self.name.text() or "").strip() or firstrun.DEFAULTS["name"],
             "gender": self.gender.currentText() or firstrun.DEFAULTS["gender"],
@@ -125,16 +143,18 @@ class SetupWizard(QDialog):
         return self._result or dict(firstrun.DEFAULTS)
 
 
-def run_if_needed(app) -> dict | None:
+def run_if_needed(app, force: bool = False) -> dict | None:
     """需要时弹向导并落盘；不需要就返回 None。
 
-    失败绝不影响启动：宁可给人设兜底，也不能让程序起不来。
+    force=True：调用方已经判断过"首次启动"（run.py 是在 db.init_db() **之前**判断的），
+    这里不要再查一次 —— 建库之后 `firstrun.detect()` 永远是 False，向导会永远弹不出来。
     """
-    try:
-        if not firstrun.detect():
+    if not force:
+        try:
+            if not firstrun.detect():
+                return None
+        except Exception:
             return None
-    except Exception:
-        return None
     try:
         wizard = SetupWizard()
         wizard.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -142,7 +162,14 @@ def run_if_needed(app) -> dict | None:
         app.processEvents()
         accepted = wizard.exec() == QDialog.Accepted
         prof = wizard.result_profile() if accepted else dict(firstrun.DEFAULTS)
-        return firstrun.apply(prof)
+        applied = firstrun.apply(prof)
+        if getattr(wizard, "adopt_dir", ""):
+            try:
+                qq_adopt.adopt(wizard.adopt_dir)
+            except Exception:
+                # 接管失败不影响首次设定；用户之后可以在「QQ 接入」面板里再点一次
+                pass
+        return applied
     except Exception as error:  # noqa: BLE001
         try:
             return firstrun.apply(dict(firstrun.DEFAULTS))

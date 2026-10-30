@@ -133,7 +133,7 @@ def boot(headless: bool = False) -> int:
             _log("首次启动：进入初始设定向导")
             from ui import wizard
 
-            out = wizard.run_if_needed(app)
+            out = wizard.run_if_needed(app, force=True)
             _log(f"初始设定已落盘：{(out or {}).get('profile')}")
     except Exception as exc:  # noqa: BLE001
         _log(f"初始设定向导跳过（不影响启动）：{exc}")

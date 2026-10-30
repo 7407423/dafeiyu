@@ -25,9 +25,9 @@
   },
   "language": {
     "summary_max": 1000,
-    "memory_trigger": 3000,
-    "memory_target": 3000,
-    "tolerance": 500,
+    "memory_trigger": 6000,
+    "memory_target": 6000,
+    "tolerance": 1000,
     "lock_days": 14
   },
   "emotion_memory": {

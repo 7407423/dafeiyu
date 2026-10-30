@@ -95,6 +95,10 @@ def _parse_stream(raw: str) -> tuple[str, dict, bool]:
             ev = json.loads(line)
         except Exception:
             continue
+        # DSH 的 --json 流理论上每行一个对象，但实测会出现数组/字符串/数字行；
+        # 以前直接 ev.get() 会在 list/str 上抛 AttributeError，把整次模型调用打成崩溃。
+        if not isinstance(ev, dict):
+            continue
         saw = True
         kind = ev.get("type")
         if kind == "text":
@@ -153,12 +157,15 @@ def _run_dsh(prompt: str, timeout: int, task: str = "dialogue",
     if not cmd_path.exists():
         return False, "找不到 dsh 命令行（config/llm.json → providers.dsh.cmd）", {}
     ensure_patch()
-    cmd = ["cmd", "/c", str(cmd_path), "--profile", "headless", "--patch", str(PATCH_FILE), "--json", "-"]
+    # 注意：dsh.cmd 的默认安装路径含空格（...\DeepSeek Harness\...），
+    # 用 list 传给 cmd /c 时会在空格处截断。这里拼成一条命令、交给 shell=True，
+    # 由 cmd.exe 自己按引号解析（prompt 走 stdin，不拼进命令，无注入面）。
+    cmd = f'"{cmd_path}" --profile headless --patch "{PATCH_FILE}" --json -'
     env = dict(os.environ)
     env.setdefault("PYTHONUTF8", "1")
     try:
         proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
+            cmd, shell=True, input=prompt, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=timeout, cwd=str(cfg.get("cwd") or settings.ROOT), env=env,
         )
     except subprocess.TimeoutExpired:

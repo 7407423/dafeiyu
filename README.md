@@ -18,13 +18,15 @@
 
 # 大肥鱼 v0.9.1
 
-## 本版更新（v0.9.1）
+## 本版更新（v0.9.3）
 
-- **刷抖音请示加了冷却**：老大拒绝 → **3 小时**内不再问；刷完一轮 → **6 小时**内不再问；
-  基础间隔从 30 分钟放宽到 **3 小时**。
-- **例外**：冷却期内如果「好奇心」足够高（≥0.7，来自好奇心引擎 + 内稳态无聊信号），
-  允许**破例一次**，破例后本次冷却不再重复打扰。
-- 冷却状态持久化在 `state/douyin-study.json`，重启也守规矩。
+- **修复：首次启动向导永远弹不出来**。`run.py` 在 `db.init_db()` 之前判断"首次启动"，
+  但向导内部又查了一次 `firstrun.detect()`——此时库已经建好，永远是 False。现在传 `force=True`。
+- **修复：模型调用到解析就崩**。`_parse_stream` 遇到非对象 JSON 行（数组/字符串/数字）会
+  `AttributeError`；`dsh.cmd` 路径含空格时 `cmd /c` 会截断。两处都修了。
+- **修复：装不起来**。`start.bat` 现在优先找 Python 3.12 / 3.11 / 3.10，找不到就明确提示
+  （PySide6 没有 3.13 / 3.14 的安装包），不再让 `py -3` 拿到 3.14 后 pip 直接失败。
+- 版本号统一到 0.9.3。
 
 # 大肥鱼 v2
 
@@ -66,8 +68,46 @@ python run.py
 | 跑三个演示 | `python demo\run_all.py` |
 | 夜间批处理（计划任务用） | `python tools\nightly.py learn\|practice\|daily\|archive` |
 
-运行环境：Python 3.10+（本机用 DSH 自带 3.12），PySide6 6.12 + APScheduler 3.11，Windows。
+运行环境：Python 3.10–3.12（PySide6 暂无 3.13 / 3.14 的包，用 `start.bat` 会自动挑 3.12），Windows。
 依赖都装在 `~/.dafeiyu\.venv`。
+
+---
+
+## 0.2 已经有 QQ 接入？一键接管（不碰鱼的数据）
+
+老用户几乎都已经有一套 QQ 接入了：`qq-bridge` 配 SnowLuma 或 NapCat，账号早登录好了、群也加好了。
+以前换到/重装大肥鱼，要手工去 `config/app.json` 填 `bridge.dir` 和 `owner_qq`，填错一个字符她就
+"哑巴"：能算、能记，但一句话发不出去；更糟的是有人因此重建 persona，把鱼养成了第二条。
+
+现在有两条路，**都只写配置、先备份、可还原，不碰 db / 记忆 / 情绪 / 日记，也不会启动或停止桥接**：
+
+**界面**：打开「QQ 接入」页 → 点「检测已接好的 QQ」→ 选中 → 「一键接管」。
+首次启动向导里如果检测到本机已有 QQ 接入，会显示一个默认勾选的接管选项。
+
+**命令行**：
+
+```bash
+python tools/adopt_qq.py --list                 # 看本机有哪些已接好的 QQ
+python tools/adopt_qq.py --dry-run "D:\qq-bridge"  # 预检，不写盘
+python tools/adopt_qq.py --adopt "D:\qq-bridge"    # 接管
+python tools/adopt_qq.py --rollback             # 还原到接管前
+```
+
+接管时会：
+
+1. 读桥接的 `config.json` / `state/console-token` / `state/social-v2.json`，认出当前账号、白名单、
+   在线状态、情绪模式（`core` / `local`）与控制台端口；
+2. 备份 `config/app.json` 到 `config/backup/app-<时间>.json`；
+3. 把 `app.json` 的 `bridge` 段指过去（`dir`、`send_api`、`status_api`、`owner_qq`、`emotion_mode`）；
+4. 写 `config/qq_config.json`（面板读的本地副本）；
+5. 默认把 `ownerQQ` / `allow` **merge** 回桥接的 `config.json`（只改这两个字段，别的原样保留）；
+6. 把接管记录写进 `state/qq-adopt.json`，随时可 `--rollback`。
+
+桥接不是 SnowLuma 也没关系：OneBot v11 的实现都认（NapCat / Lagrange / LLOneBot / go-cqhttp）。
+桥接侧的 `onebot` 配置段怎么写见 qq-bridge 仓库的 `docs/guides/MIGRATION.md`。
+
+> 边界：检测只读；接管只写上面这 6 处配置。`db/`、`记忆系统/`、`state/emotion.json`、日记一字节不动。
+> 桥接没在跑时也能接管配置，等你把桥接启动起来就生效。
 
 ---
 
@@ -143,7 +183,7 @@ python run.py
 | 项 | 语言记忆 | 情绪记忆 |
 | --- | --- | --- |
 | 单次上限 | 1000 字 | 2000 字 |
-| 总量触发 | >3000 → 压到 3000±500 | >6000 → 压到 6000±1000 |
+| 总量触发 | >6000 → 压到 6000±1000 | >6000 → 压到 6000±1000 |
 | 冷却 | 压缩后 14 天不学 | 压缩后 14 天不学 |
 | 到期 | 主动询问「要不要更新」，同意才解锁；「再等等」缓 7 天 | 同左 |
 | 实现 | `language/memory.py`（两个 layer 共用一套账本） | 同左 |

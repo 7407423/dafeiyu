@@ -7,7 +7,7 @@
 """语言记忆 / 情绪记忆的「账本」：字数上限、整体压缩、两周冷却、到期询问。
 
 用户既定规则：
-- 语言：单次总结 ≤1000 字；总字数超 3000 → 压到 3000（±500），两周不学。
+- 语言：单次总结 ≤1000 字；总字数超 6000 → 压到 6000（±1000），两周不学。
 - 情绪：单次记录 ≤2000 字；总字数超 6000 → 压到 6000（±1000），两周不学。
 """
 
@@ -70,9 +70,9 @@ def _limits(layer: str) -> dict:
     cfg = settings.thr().get(key, {})
     return {
         "record_max": int(cfg.get("record_max", 1000 if layer == Layer.LANGUAGE.value else 2000)),
-        "trigger": int(cfg.get("memory_trigger", 3000 if layer == Layer.LANGUAGE.value else 6000)),
-        "target": int(cfg.get("memory_target", 3000 if layer == Layer.LANGUAGE.value else 6000)),
-        "tolerance": int(cfg.get("tolerance", 500 if layer == Layer.LANGUAGE.value else 1000)),
+        "trigger": int(cfg.get("memory_trigger", 6000 if layer == Layer.LANGUAGE.value else 6000)),
+        "target": int(cfg.get("memory_target", 6000 if layer == Layer.LANGUAGE.value else 6000)),
+        "tolerance": int(cfg.get("tolerance", 1000 if layer == Layer.LANGUAGE.value else 1000)),
         "lock_days": int(cfg.get("lock_days", 14)),
     }
 

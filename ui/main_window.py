@@ -13,19 +13,35 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QProcess, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QMainWindow, QMessageBox, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressDialog, QVBoxLayout, QWidget,
 )
 
-from core import db, settings
+from core import db, settings, updater
 from core.cognition import loop
 from core.emotion import vector
 from ui.chat import ChatPanel
 from ui.shell import Shell
+
+
+class UpdateWorker(QThread):
+    """后台下载 + 安装，避免下载时卡住界面。"""
+
+    progress = Signal(int, int)
+    done = Signal(dict)
+    failed = Signal(str)
+
+    def run(self) -> None:  # noqa: D401
+        try:
+            result = updater.update(progress=lambda done, total: self.progress.emit(int(done), int(total)))
+            self.done.emit(result)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
 
 
 class MainWindow(QMainWindow):
@@ -69,6 +85,7 @@ class MainWindow(QMainWindow):
         outer.addLayout(head)
 
         self.shell = Shell()
+        self.shell.update_handler = self.check_update
         outer.addWidget(self.shell, 1)
 
         self.chat = ChatPanel()
@@ -126,11 +143,76 @@ class MainWindow(QMainWindow):
         box.exec()
 
     def check_update(self) -> None:
-        text = self.shell.check_update()
+        info = updater.check()
+        if not info.get("ok"):
+            QMessageBox.information(self, "检查更新",
+                                    f"当前版本 {info.get('local')}\n{info.get('error') or '检查更新失败'}")
+            return
+        if not info.get("newer"):
+            QMessageBox.information(self, "检查更新", f"当前已是最新版本（{info.get('local')}）。")
+            return
+        notes = (info.get("notes") or "").strip()
+        text = (f"发现新版本 {info.get('latest')}（当前 {info.get('local')}）"
+                + (f"\n\n{notes}" if notes else "")
+                + "\n\n现在下载并安装吗？\n只替换程序代码，不碰配置、记忆、情绪、日记。")
+        if QMessageBox.question(self, "发现新版本", text) != QMessageBox.Yes:
+            return
+        self._start_update()
+
+    def _start_update(self) -> None:
+        self._progress = QProgressDialog("正在下载新版本…", "隐藏", 0, 100, self)
+        self._progress.setWindowTitle("下载新版本")
+        self._progress.setWindowModality(Qt.WindowModal)
+        self._progress.setMinimumDuration(0)
+        self._progress.setAutoClose(False)
+        self._progress.setAutoReset(False)
+        self._worker = UpdateWorker(self)
+        self._worker.progress.connect(self._on_update_progress)
+        self._worker.done.connect(self._on_update_done)
+        self._worker.failed.connect(self._on_update_failed)
+        self._worker.start()
+        self._progress.show()
+
+    def _on_update_progress(self, done: int, total: int) -> None:
+        if total > 0:
+            self._progress.setMaximum(total)
+            self._progress.setValue(done)
+        else:
+            self._progress.setValue(min(99, self._progress.value() + 1))
+
+    def _on_update_done(self, result: dict) -> None:
+        try:
+            self._progress.close()
+        except Exception:
+            pass
+        if not result.get("ok"):
+            QMessageBox.warning(self, "更新失败", str(result.get("error") or "未知原因"))
+            return
+        version = result.get("latest") or result.get("version") or ""
+        text = (f"已更新到 {version}（覆盖 {result.get('installed', 0)} 个文件）。\n"
+                "重启后生效。\n\n现在重启大肥鱼吗？")
         box = QMessageBox(self)
-        box.setWindowTitle("检查更新")
+        box.setWindowTitle("更新完成")
         box.setText(text)
-        box.exec()
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.Yes)
+        if box.exec() == QMessageBox.Yes:
+            self._restart_app()
+
+    def _on_update_failed(self, message: str) -> None:
+        try:
+            self._progress.close()
+        except Exception:
+            pass
+        QMessageBox.warning(self, "更新失败", f"下载或安装失败：{message}\n\n原来的程序没有被改动。")
+
+    def _restart_app(self) -> None:
+        """退出并延迟 2 秒重启（先让单实例锁释放，再用同一个解释器拉起 run.py）。"""
+        root = str(updater.PROGRAM_ROOT)
+        python = sys.executable or "pythonw"
+        command = f'timeout /t 2 >nul & start "" "{python}" "{root}\\run.py"'
+        QProcess.startDetached("cmd", ["/c", command], root)
+        QApplication.quit()
 
     # ── 刷新 ──
     def _refresh_live(self) -> None:

@@ -8,7 +8,7 @@
 | 项 | 要求 |
 | --- | --- |
 | 系统 | Windows 10/11（macOS/Linux 见文末） |
-| Python | 3.10+，且 `python` 或 `py -3` 在 PATH 里 |
+| Python | 3.10 – 3.12（PySide6 暂无 3.13 / 3.14 包），且 `python` 或 `py -3` 在 PATH 里 |
 | 网络 | 能访问 pypi（装依赖） |
 | 不需要 | 不需要 git / gh / PowerShell / 管理员权限 |
 
@@ -65,10 +65,29 @@ py -3 -m venv .venv
 3. 把 `default` 改成 `"http"`，并把 `tasks` 里那几项也都写成 `"http"`；
 4. 重启程序。
 
-## 5. 接 QQ（可选，需要另一个私有项目）
+## 5. 接 QQ（可选；已经有 QQ 接入的，一键接管）
 
-`config\app.json` 的 `bridge` 段填你自己的桥接地址与管理员 QQ 号。
+本机如果已经跑着 `qq-bridge`（SnowLuma / NapCat / 其它 OneBot v11 实现都行），不用重配：
+
+1. 打开「QQ 接入」页；
+2. 点「检测已接好的 QQ」→ 选中 → 「一键接管」；
+3. 或者命令行：
+
+```cmd
+.venv\Scripts\python.exe tools\adopt_qq.py --list
+.venv\Scripts\python.exe tools\adopt_qq.py --adopt "D:\qq-bridge"
+```
+
+接管只改配置、先备份、可还原（`--rollback`），不碰记忆 / 情绪 / 日记，也不会启动或停止桥接。
 没有桥接也能用：软件本身是桌面 AI，界面里可以对话。
+
+## 5.1 升级到新版本
+
+- 界面：右下角「下载新版本」→ 检查 → 下载 → 安装 → 提示重启。
+- 没有更新地址时，会提示去 `config\app.json` 填 `update_url`（指向发布目录里的 `update.json`）。
+- 更新只覆盖程序代码；`config\`、`db\`、`state\`、`记忆系统\`、`logs\`、`learning\` 一个字节不动，
+  旧代码备份在 `.update\backup-*\`，可用 `core.updater.rollback()` 还原。
+- 发版用 `python tools\release.py --version <版本>`，产物在 `dist\`。
 
 ## 6. 常见问题
 

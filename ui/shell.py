@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QSplitter, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from core import cost, db, settings
+from core import cost, db, settings, updater
 from core.entity import Layer
 from ui.avatar import AvatarWidget
 from ui.panels.audit import AuditPanel
@@ -251,6 +251,9 @@ class DetailPage(QWidget):
 class Shell(QStackedWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # 由 MainWindow 注入：点「下载新版本」时走完整的下载/安装/重启流程。
+        # 没有注入时退化为"只检查并返回说明文字"。
+        self.update_handler = None
         self.panels = build_panels()
         self.home = HomePage(self)
         self.detail = DetailPage(self)
@@ -336,20 +339,18 @@ class Shell(QStackedWidget):
         return "\n".join(lines)
 
     def check_update(self) -> str:
-        local = str((settings.app().get("version") or "0.1.0"))
-        url = str((settings.app().get("update_url") or "")).strip()
-        if not url:
-            return (f"当前版本 {local}\n没有配置更新地址（config/app.json → update_url），"
-                    f"按本地版本算已是最新。")
-        try:
-            with urllib.request.urlopen(url, timeout=4) as resp:
-                data = json.loads(resp.read().decode("utf-8", "replace"))
-            latest = str(data.get("version") or "")
-            if latest and latest != local:
-                return f"发现新版本 {latest}（当前 {local}）\n{data.get('url') or ''}"
-            return f"当前已是最新版本（{local}）"
-        except Exception as exc:  # noqa: BLE001
-            return f"检查更新失败：{exc}\n当前版本 {local}"
+        if callable(self.update_handler):
+            self.update_handler()
+            return ""
+        info = updater.check()
+        if not info.get("ok"):
+            return f"当前版本 {info.get('local')}\n{info.get('error') or '检查更新失败'}"
+        if not info.get("newer"):
+            return f"当前已是最新版本（{info.get('local')}）。"
+        notes = (info.get("notes") or "").strip()
+        return (f"发现新版本 {info.get('latest')}（当前 {info.get('local')}）"
+                + (f"\n\n{notes}" if notes else "")
+                + "\n\n点「确定」后会下载并安装；只替换程序代码，不碰配置、记忆、情绪、日记。")
 
 
 def _probe_http(name: str, url: str, token_file: Path | None = None) -> tuple[str, bool, str]:

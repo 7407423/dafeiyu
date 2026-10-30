@@ -165,6 +165,25 @@ class Handler(BaseHTTPRequestHandler):
             out = dialogue.handle_owner_message(text, conv=str(body.get("conv") or "private:owner"))
             self._json(200, out)
             return
+        if self.path.startswith("/api/webdeepseek/ask"):
+            # 桥接的 qq_ask_web_deepseek 工具会调这里：用本机 Edge 打开网页版 DeepSeek 答题，
+            # 吃网页免费额度，不走 API。没登录时最多等 3 分钟让老大扫码。
+            if not text:
+                self._json(400, {"ok": False, "error": "text 不能为空"})
+                return
+            try:
+                from . import webstudy
+
+                answer = webstudy.ask_web_deepseek(
+                    text,
+                    timeout_s=int(body.get("timeout_s") or 150),
+                    log=None,
+                )
+                self._json(200, {"ok": True, "answer": answer})
+            except Exception as exc:  # noqa: BLE001
+                self._json(200, {"ok": False, "error": str(exc),
+                                 "need_login": "登录" in str(exc) or "login" in str(exc).lower()})
+            return
         if self.path.startswith("/api/refusal/decide"):
             from .refusal import arbiter as refusal_arbiter
 

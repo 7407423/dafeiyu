@@ -7,6 +7,8 @@
   ],
   "app": {
     "schema_version": 2,
+    "version": "0.9.3",
+    "update_url": "",
     "window": {"width": 1240, "height": 860, "min_width": 980, "min_height": 680},
     "tick": {"app_seconds": 20, "headless_seconds": 60, "slow_tick_warn_seconds": 20},
     "learning": {
